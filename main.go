@@ -65,7 +65,7 @@ func (h *httpStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream
 }
 
 func (h *httpStream) run() {
-	buf := bufio.NewReader(&h.r)
+	buf := bufio.NewReaderSize(&h.r, 4096*2)
 	for {
 		req, err := http.ReadRequest(buf)
 		if err == io.EOF {

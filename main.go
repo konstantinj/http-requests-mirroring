@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -33,6 +34,32 @@ import (
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/google/gopacket/tcpassembly/tcpreader"
 )
+
+type Counter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *Counter) Increment() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count++
+}
+
+func (c *Counter) Decrement() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count--
+}
+
+func (c *Counter) Value() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count
+}
+
+var counterOk = &Counter{}
+var counterFail = &Counter{}
 
 var fwdDestination = flag.String("destination", "", "Destination of the forwarded requests.")
 var fwdPerc = flag.Float64("percentage", 100, "Must be between 0 and 100.")
@@ -65,15 +92,18 @@ func (h *httpStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream
 }
 
 func (h *httpStream) run() {
-	buf := bufio.NewReaderSize(&h.r, 4096*2)
+
+	buf := bufio.NewReaderSize(&h.r, 1024*32)
 	for {
 		req, err := http.ReadRequest(buf)
 		if err == io.EOF {
 			// We must read until we see an EOF... very important!
 			return
 		} else if err != nil {
-			log.Println("Error reading stream", h.net, h.transport, ":", err)
+			counterFail.Increment()
+			//log.Println("Error reading stream", h.net, h.transport, ":", err)
 		} else {
+			counterOk.Increment()
 			reqSourceIP := h.net.Src().String()
 			reqDestionationPort := h.transport.Dst().String()
 			body, bErr := ioutil.ReadAll(req.Body)
@@ -233,6 +263,14 @@ func main() {
 
 	//Open a TCP Client, for NLB Health Checks only
 	go openTCPClient()
+
+	go func() {
+		for {
+			time.Sleep(10 * time.Second)
+			fmt.Println("Counter Success:", counterOk.Value())
+			fmt.Println("Counter Failure:", counterFail.Value())
+		}
+	}()
 
 	for {
 		select {
